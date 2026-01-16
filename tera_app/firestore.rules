@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // --- Helper Functions ---
+    
+    // Check if user is signed in
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if the user is accessing their own document
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    // Check if the user is an Admin
+    // (Checks for existence of a document in 'admins' collection with their UID)
+    function isAdmin() {
+      return exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // --- Collections ---
+
+    // Admins Collection
+    // Used to verify admin privileges.
+    match /admins/{userId} {
+      // Authenticated users can read their own specific doc to verify if they are an admin.
+      // Admins can read all admin docs to manage them.
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      
+      // Admins can create/update/delete other admins (or themselves)
+      allow write: if isAdmin();
+    }
+
+    // Drivers Collection
+    // Stores user profiles and status.
+    match /drivers/{driverId} {
+      // Read: Owner can see their profile. Admins can see all.
+      allow read: if isAuthenticated() && (isOwner(driverId) || isAdmin());
+      
+      // Create: New users can register themselves or Admins can add them.
+      allow create: if isAuthenticated() && (isOwner(driverId) || isAdmin());
+      
+      // Update: Owner can update details. Admins can update status (approve/block).
+      allow update: if isAuthenticated() && (isOwner(driverId) || isAdmin());
+      
+      // Delete: Only Admins can delete drivers.
+      allow delete: if isAdmin();
+      
+      // Note: Trips subcollection moved to root match for clarity/debugging
+    }
+
+    // Trips Subcollection (Flattened)
+    match /drivers/{driverId}/trips/{tripId} {
+        // Read: Owner or Admin
+        allow read: if isAuthenticated() && (isOwner(driverId) || isAdmin());
+        
+        // Create: OWNER ONLY (Restored Security)
+        allow create: if isAuthenticated() && isOwner(driverId); 
+        
+        // Update/Delete: Admin only
+        allow update, delete: if isAdmin();
+    }
+
+    // Collection Group Query for Reports
+    match /{path=**}/trips/{tripId} {
+      allow read: if isAdmin();
+    }
+
+    // Queue Collection
+    // Real-time queue data.
+    match /queue/{driverId} {
+      // Read: Open to all authenticated users
+      allow read: if isAuthenticated();
+      
+      // Create: Admin can add anyone. Driver can add themselves.
+      allow create: if isAuthenticated() && (isOwner(driverId) || isAdmin());
+      
+      // Update: Only Admins can reorder the queue.
+      allow update: if isAdmin();
+      
+      // Delete: Admin can remove anyone. Driver can remove themselves.
+      allow delete: if isAuthenticated() && (isOwner(driverId) || isAdmin());
+    }
+
+    // Notifications Collection
+    match /notifications/{notificationId} {
+      allow read, write: if isAuthenticated();
+    }
+  }
+}
